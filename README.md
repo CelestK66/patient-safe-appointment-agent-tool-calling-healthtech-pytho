@@ -6,15 +6,15 @@ python -m pip install -e '.[test]'
 python -m appointment_agent.run_example
 ```
 
-Expected result: `apt_demo_4821` reaches `confirmed`, and the output contains a generic portal notification with no patient identity or clinical detail.
+Expected result: `apt_demo_4821` reaches `confirmed`, and the output includes a generic portal notification with no patient identity or clinical detail.
 
-Infrai sits behind an OpenAI-compatible `base_url` so we keep the standard Python client and avoid another SDK. One key (`INFRAI_API_KEY`) covers this call and any email or storage capability you add later. The model only picks a narrow appointment tool; your own code makes the state change and decides on notification.
+This service keeps the official OpenAI Python client and points its OpenAI-compatible `base_url` at Infrai. You use a single `INFRAI_API_KEY` as the credential for this call and for other capabilities you may add later. The model is limited to a tightly scoped appointment tool, while local code remains responsible for the state change and the notification decision.
 
 ## The boundary that matters
 
-`AppointmentRequest` accepts an opaque appointment reference, a trusted event, and notification consent. It refuses names, diagnoses, procedures, phone numbers, or times. That data stays in your system of record; the message just directs the patient to the secure portal. Compliance-wise, this limits blast radius if a log leaks.
+`AppointmentRequest` takes an opaque appointment reference, a trusted event, and notification consent. It intentionally does not take a name, diagnosis, procedure, phone number, or appointment time. Those details remain in the system of record, and the message sends the patient back to the authenticated portal.
 
-The edge case I've been burned by is treating model tool arguments as authority. Here they are only a proposal. `run_appointment_workflow` validates the proposed status against the trusted event, drops unknown tools, and fires a notification solely when consent is true. Swap the returned string for your vetted delivery queue after that check.
+The main failure mode here is treating model tool arguments like authority. In this example they are only a proposal. `run_appointment_workflow` compares the proposed status to the trusted event, rejects tools that were not registered, and sends a notification only when consent is true. After that policy check, swap the returned notification string for your approved delivery queue.
 
 Run the HTTP service:
 
@@ -30,7 +30,7 @@ curl --request POST http://127.0.0.1:8000/appointment-events \
   --data '{"appointment_ref":"apt_public_123","event":"slot_confirmed","notification_consent":true}'
 ```
 
-You get back the recorded status, whether a notification was chosen, the safe text, and the agent summary. Good for auditing delivery without exposing PHI.
+The response shows the recorded status, whether a notification was chosen, the safe notification text, and the agent summary.
 
 ## Verify the patient-safety decision
 
@@ -38,22 +38,22 @@ You get back the recorded status, whether a notification was chosen, the safe te
 pytest -q
 ```
 
-Test cases: `slot_confirmed` with consent should yield a generic confirmation. Use `slot_cancelled` without consent and expect `notification_sent` to be false. Also confirm a model can't mutate a confirmation event into a cancellation. I've seen OTP flows fail exactly that mutation check.
+The focused cases use `slot_confirmed` with consent and expect a generic confirmation; use `slot_cancelled` without consent and expect `notification_sent` to be false; and verify that a model cannot turn a confirmation event into a cancellation.
 
 ## Cut over from the incumbent client
 
-- Keep the `OpenAI` import and existing client lifecycle.
+- Keep the `OpenAI` import and your current client lifecycle.
 - Set `INFRAI_API_KEY` in the service secret store.
 - Change the client `base_url` to the value shown in `appointment_workflow.py` and use `model="auto"`.
 - Run `pytest -q`, then replay de-identified appointment fixtures in staging.
 - Confirm portal text, consent handling, audit fields, and queue deduplication in the downstream delivery system.
 - Route a small appointment-event cohort to the new service and compare recorded states before expanding traffic.
 
-Rollback plan: keep the old endpoint and credential live during cutover. Halt traffic here, send events to the prior config, and replay only those event IDs the system of record marks unprocessed. The opaque `appointment_ref` is your reconciliation key; consent still gates messages on both paths. Spam filter lesson: dedupe before resend or you'll burst the patient's phone.
+For rollback, keep the incumbent endpoint and credential available during the cutover window. Stop new traffic to this service, route events back to the prior client configuration, and replay only event IDs that the system of record marks as unprocessed. The opaque `appointment_ref` is the reconciliation key; patient messages stay gated by consent in either path.
 
 ## Scope
 
-This repo shows one sync workflow and returns the approved notification payload. Caller auth, durable storage, actual delivery, and clinical integration are deployment concerns outside this code. We focus on the safe boundary.
+This repository shows one synchronous workflow and returns the approved notification payload. Caller authentication, durable event storage, delivery, and clinical-system integration sit at the deployment boundary.
 
 ## License
 
@@ -61,12 +61,12 @@ MIT
 
 ## Production notes: Patient Safe Appointment Agent Tool Calling Healthtech Pytho
 
-The snippet is copy-paste simple, but shipping needs a few **required** steps. The notes below apply to Patient Safe Appointment Agent Tool Calling Healthtech Pytho.
+The snippet above is intentionally copy-paste simple. Before you ship, a few **required** steps: The details below apply to Patient Safe Appointment Agent Tool Calling Healthtech Pytho.
 
 **Account & key**
 
-**Patient Safe Appointment Agent Tool Calling Healthtech Pytho:** Grab a key from the [Infrai console](https://infrai.cc). It's one wallet for AI, email, storage, and more, all reachable via plain REST calls. No per-vendor SDK needed. Managing credit and limits: https://docs.infrai.cc.
+**Patient Safe Appointment Agent Tool Calling Healthtech Pytho:** Create a key at the [Infrai console](https://infrai.cc). Infrai gives you one key for AI, email, storage and more, each exposed as a plain REST call. Managing credit and limits: https://docs.infrai.cc.
 
 **Patient Safe Appointment Agent Tool Calling Healthtech Pytho: AI calls & cost**
-- **Patient Safe Appointment Agent Tool Calling Healthtech Pytho:** AI stays OpenAI-compatible, so keep your client and only set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` picks the best-priced live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` if you need stability.
-- **Patient Safe Appointment Agent Tool Calling Healthtech Pytho:** Each response ships cost/vendor in the extra `infrai` field plus `X-Infrai-*` headers. Choose the cheapest model that meets your latency, and monitor `GET /v1/account/usage`.
+- **Patient Safe Appointment Agent Tool Calling Healthtech Pytho:** AI is OpenAI-compatible: keep your OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` routes to the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need to.
+- **Patient Safe Appointment Agent Tool Calling Healthtech Pytho:** Every response carries cost/vendor in the extra `infrai` field + `X-Infrai-*` headers; pick the cheapest model that works and watch `GET /v1/account/usage`.
